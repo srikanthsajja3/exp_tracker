@@ -43,8 +43,8 @@ const ActivityRing: React.FC<{
 
   return (
     <div className="ring-item">
-      <div style={{ position: 'relative', width: size, height: size }}>
-        <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: size, aspectRatio: '1/1', margin: '0 auto' }}>
+        <svg viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -419,7 +419,7 @@ const App: React.FC = () => {
           <h1 style={{ color: 'var(--accent-blue)', margin: 0, fontSize: '1.75rem' }}>FinControl</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 500 }}>PROFESSIONAL LEDGER</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.4rem', borderRadius: '14px', border: '1px solid var(--border)' }}>
+        <div className="header-nav" style={{ display: 'flex', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.4rem', borderRadius: '14px', border: '1px solid var(--border)' }}>
           {!pushEnabled && (
             <button 
               onClick={requestNotificationPermission}
@@ -453,6 +453,37 @@ const App: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="mobile-nav">
+        <button 
+          className={`nav-item ${activeTab === 'input' ? 'active' : ''}`}
+          onClick={() => setActiveTab('input')}
+        >
+          <PlusCircle size={22} />
+          <span>Add</span>
+        </button>
+        <button 
+          className={`nav-item ${activeTab === 'recurring' ? 'active' : ''}`}
+          onClick={() => setActiveTab('recurring')}
+        >
+          <Calendar size={22} />
+          <span>Plans</span>
+        </button>
+        <button 
+          className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dashboard')}
+        >
+          <LayoutDashboard size={22} />
+          <span>Data</span>
+        </button>
+        {!pushEnabled && (
+          <button className="nav-item" onClick={requestNotificationPermission}>
+            <Bell size={22} />
+            <span>Alerts</span>
+          </button>
+        )}
+      </nav>
 
       {activeTab === 'input' ? (
         <div className="card">
@@ -583,7 +614,7 @@ const App: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                   <div className="input-group">
                     <label>Amount</label>
-                    <input type="number" value={pAmount} onChange={(e) => setPAmount(e.target.value)} placeholder="0.00" required />
+                    <input type="number" value={pAmount} onChange={(e) => setPAmount(e.target.value)} placeholder="0.00" inputMode="decimal" required />
                   </div>
                   <div className="input-group">
                     <label>Due Date</label>
