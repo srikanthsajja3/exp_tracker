@@ -89,6 +89,21 @@ const ActivityRing: React.FC<{
   );
 };
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'input' | 'dashboard' | 'recurring'>('input');
   const [type, setType] = useState<'inflow' | 'outflow'>('outflow');
@@ -115,23 +130,79 @@ const App: React.FC = () => {
     return false;
   });
 
+  const subscribeToPushNotifications = useCallback(async () => {
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      
+      if (vapidPublicKey) {
+        try {
+          const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+          });
+          
+          // Save subscription to Supabase
+          const { error } = await supabase
+            .from('push_subscriptions')
+            .upsert(
+              { subscription },
+              { onConflict: 'endpoint' }
+            );
+          
+          if (error) {
+            console.error('Error saving subscription to Supabase:', error);
+            alert('Supabase error: ' + error.message);
+          } else {
+            console.log('Push subscription saved successfully');
+            alert('Push subscription saved successfully to Supabase!');
+          }
+        } catch (subscribeErr) {
+          console.error('Failed to subscribe to push notifications:', subscribeErr);
+          alert('Subscribe error: ' + (subscribeErr as Error).message);
+        }
+      } else {
+        console.warn('VITE_VAPID_PUBLIC_KEY is not defined in environment variables.');
+        alert('VAPID public key is missing from environment!');
+      }
+    } catch (err) {
+      console.error('Error in serviceWorker.ready:', err);
+    }
+  }, []);
+
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
       alert('This browser does not support notifications.');
       return;
     }
 
-    const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
-      setPushEnabled(true);
-      new Notification("FinControl", { 
-        body: "Notifications are now active!",
-        icon: "/favicon.svg"
-      });
-    } else {
-      alert('Notification permission denied.');
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        setPushEnabled(true);
+        await subscribeToPushNotifications();
+        
+        new Notification("FinControl", { 
+          body: "Notifications are now active!",
+          icon: "/favicon.svg"
+        });
+      } else {
+        alert('Notification permission denied.');
+      }
+    } catch (err) {
+      console.error('Error during notification setup:', err);
+      alert('Failed to set up notifications: ' + (err as Error).message);
     }
   };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      subscribeToPushNotifications();
+    }
+  }, [subscribeToPushNotifications]);
 
   useEffect(() => {
     localStorage.setItem('fin_budget', budget.toString());
