@@ -30,6 +30,15 @@ interface Transaction {
   projects?: { name: string };
 }
 
+interface GeneralReminder {
+  id: string;
+  title: string;
+  body: string;
+  type: 'daily' | 'one-off';
+  reminder_time?: string;
+  reminder_date?: string;
+}
+
 const ActivityRing: React.FC<{ 
   percentage: number; 
   color: string; 
@@ -105,7 +114,7 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'input' | 'dashboard' | 'recurring'>('input');
+  const [activeTab, setActiveTab] = useState<'input' | 'dashboard' | 'recurring' | 'alerts'>('input');
   const [type, setType] = useState<'inflow' | 'outflow'>('outflow');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
@@ -113,6 +122,14 @@ const App: React.FC = () => {
   const [source, setSource] = useState('regular');
   const [excludeTravel, setExcludeTravel] = useState(false);
   const [transactionDate, setTransactionDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+  // General Custom Reminders State
+  const [reminders, setReminders] = useState<GeneralReminder[]>([]);
+  const [remTitle, setRemTitle] = useState('');
+  const [remBody, setRemBody] = useState('');
+  const [remType, setRemType] = useState<'daily' | 'one-off'>('daily');
+  const [remTime, setRemTime] = useState('20:00');
+  const [remDate, setRemDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -145,11 +162,12 @@ const App: React.FC = () => {
             applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
           });
           
-          // Save subscription to Supabase
+          // Save subscription to Supabase with timezone
+          const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
           const { error } = await supabase
             .from('push_subscriptions')
             .upsert(
-              { subscription },
+              { subscription, timezone },
               { onConflict: 'endpoint' }
             );
           
@@ -220,6 +238,57 @@ const App: React.FC = () => {
       console.error('Error fetching projects:', err);
     }
   }, []);
+
+  const fetchReminders = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('general_reminders')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setReminders(data || []);
+    } catch (err) {
+      console.error('Error fetching reminders:', err);
+    }
+  }, []);
+
+  const deleteReminder = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('general_reminders')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      fetchReminders();
+    } catch (err) {
+      alert('Error deleting reminder: ' + (err as Error).message);
+    }
+  };
+
+  const handleReminderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        title: remTitle,
+        body: remBody,
+        type: remType,
+        reminder_time: remType === 'daily' ? remTime : null,
+        reminder_date: remType === 'one-off' ? remDate : null,
+      };
+      const { error } = await supabase
+        .from('general_reminders')
+        .insert([payload]);
+      
+      if (error) throw error;
+      
+      setRemTitle('');
+      setRemBody('');
+      fetchReminders();
+      alert('Reminder added successfully!');
+    } catch (err) {
+      alert('Error adding reminder: ' + (err as Error).message);
+    }
+  };
 
   const getDateBounds = useCallback(() => {
     const now = new Date();
@@ -348,7 +417,10 @@ const App: React.FC = () => {
     if (activeTab === 'dashboard' || activeTab === 'recurring') {
       fetchData();
     }
-  }, [activeTab, fetchData]);
+    if (activeTab === 'alerts') {
+      fetchReminders();
+    }
+  }, [activeTab, fetchData, fetchReminders]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -491,16 +563,14 @@ const App: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 500 }}>PROFESSIONAL LEDGER</p>
         </div>
         <div className="header-nav" style={{ display: 'flex', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.4rem', borderRadius: '14px', border: '1px solid var(--border)' }}>
-          {!pushEnabled && (
-            <button 
-              onClick={requestNotificationPermission}
-              className="toggle-btn"
-              style={{ padding: '0.5rem 0.75rem' }}
-              title="Enable Notifications"
-            >
-              <Bell size={18} />
-            </button>
-          )}
+          <button 
+            onClick={() => setActiveTab('alerts')}
+            className={`toggle-btn ${activeTab === 'alerts' ? 'active' : ''}`}
+            style={{ padding: '0.5rem 0.75rem' }}
+            title="Notification Center"
+          >
+            <Bell size={18} />
+          </button>
           <button 
             onClick={() => setActiveTab('input')}
             className={`toggle-btn ${activeTab === 'input' ? 'active' : ''}`}
@@ -548,12 +618,13 @@ const App: React.FC = () => {
           <LayoutDashboard size={22} />
           <span>Data</span>
         </button>
-        {!pushEnabled && (
-          <button className="nav-item" onClick={requestNotificationPermission}>
-            <Bell size={22} />
-            <span>Alerts</span>
-          </button>
-        )}
+        <button 
+          className={`nav-item ${activeTab === 'alerts' ? 'active' : ''}`}
+          onClick={() => setActiveTab('alerts')}
+        >
+          <Bell size={22} />
+          <span>Alerts</span>
+        </button>
       </nav>
 
       {activeTab === 'input' ? (
@@ -745,6 +816,156 @@ const App: React.FC = () => {
               ))}
               {plannedItems.filter(i => i.status === 'pending').length === 0 && (
                 <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '1rem' }}>No upcoming plans.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'alerts' ? (
+        <div>
+          {/* Web Push Subscription / Status Section */}
+          <div className="card">
+            <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Bell size={20} /> Web Push Notification Status
+            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, color: pushEnabled ? 'var(--accent-inflow)' : 'var(--accent-outflow)' }}>
+                  {pushEnabled ? 'Push Status: Active (Subscribed)' : 'Push Status: Inactive'}
+                </p>
+                <small style={{ color: 'var(--text-secondary)' }}>
+                  {pushEnabled 
+                    ? 'Your device is registered to receive background notifications in the cloud.' 
+                    : 'Subscribe to get alerts even when the application is closed.'}
+                </small>
+              </div>
+              <button 
+                type="button" 
+                onClick={requestNotificationPermission} 
+                className="toggle-btn"
+                style={{ width: 'auto', padding: '0.6rem 1rem', background: pushEnabled ? 'rgba(46, 204, 113, 0.15)' : 'var(--accent-blue)', color: '#fff', border: 'none' }}
+              >
+                {pushEnabled ? 'Sync Subscription' : 'Enable Push'}
+              </button>
+            </div>
+          </div>
+
+          {/* Add Custom Reminder Form */}
+          <div className="card">
+            <h2 style={{ marginBottom: '1.5rem' }}>Add Custom Reminder</h2>
+            <form onSubmit={handleReminderSubmit}>
+              <div className="toggle-container" style={{ marginBottom: '1rem' }}>
+                <button 
+                  type="button" 
+                  className={`toggle-btn ${remType === 'daily' ? 'active' : ''}`} 
+                  onClick={() => setRemType('daily')}
+                >
+                  Daily
+                </button>
+                <button 
+                  type="button" 
+                  className={`toggle-btn ${remType === 'one-off' ? 'active' : ''}`} 
+                  onClick={() => setRemType('one-off')}
+                >
+                  One-time Date
+                </button>
+              </div>
+
+              <div className="input-grid" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div className="input-group">
+                  <label>Title</label>
+                  <input 
+                    type="text" 
+                    value={remTitle} 
+                    onChange={(e) => setRemTitle(e.target.value)} 
+                    placeholder="e.g. Daily Check-in" 
+                    required 
+                  />
+                </div>
+                <div className="input-group">
+                  <label>Message Content</label>
+                  <input 
+                    type="text" 
+                    value={remBody} 
+                    onChange={(e) => setRemBody(e.target.value)} 
+                    placeholder="e.g. Please log your transactions for today!" 
+                    required 
+                  />
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  {remType === 'daily' ? (
+                    <div className="input-group">
+                      <label>Time of Day</label>
+                      <input 
+                        type="time" 
+                        value={remTime} 
+                        onChange={(e) => setRemTime(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="input-group">
+                        <label>Date</label>
+                        <input 
+                          type="date" 
+                          value={remDate} 
+                          onChange={(e) => setRemDate(e.target.value)} 
+                          required 
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label>Time</label>
+                        <input 
+                          type="time" 
+                          value={remTime} 
+                          onChange={(e) => setRemTime(e.target.value)} 
+                          required 
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button type="submit" className="btn-primary" style={{ marginTop: '1rem' }}>Add Reminder</button>
+            </form>
+          </div>
+
+          {/* List of Custom Reminders */}
+          <div className="card">
+            <h2 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Clock size={20} /> Active Reminders
+            </h2>
+            <div className="transaction-list">
+              {reminders.map(rem => (
+                <div key={rem.id} className="transaction-item">
+                  <div className="transaction-info">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <h4 style={{ margin: 0 }}>{rem.title}</h4>
+                      <span className="project-tag" style={{ fontSize: '0.6rem', padding: '0.2rem 0.4rem' }}>
+                        {rem.type === 'daily' ? 'Daily' : 'One-time'}
+                      </span>
+                    </div>
+                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{rem.body}</p>
+                    <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                      Scheduled: {rem.type === 'daily' 
+                        ? `Every day at ${rem.reminder_time?.substring(0, 5)}` 
+                        : `${new Date(rem.reminder_date || '').toLocaleDateString()} at ${rem.reminder_time?.substring(0, 5)}`}
+                    </small>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <button 
+                      onClick={() => deleteReminder(rem.id)} 
+                      style={{ background: 'none', border: 'none', color: 'var(--accent-outflow)', cursor: 'pointer' }} 
+                      title="Delete"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {reminders.length === 0 && (
+                <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '1rem' }}>No custom reminders scheduled.</p>
               )}
             </div>
           </div>

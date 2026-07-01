@@ -37,31 +37,68 @@ if (!supabaseUrl || !supabaseAnonKey || !vapidPublicKey || !vapidPrivateKey) {
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 webpush.setVapidDetails(
-  'mailto:srikanthsajja3@gmail.com', // Contact email
+  'mailto:srikanthsajja3@gmail.com',
   vapidPublicKey,
   vapidPrivateKey
 );
 
+// Helper to get current date/time components in a specific timezone
+function getLocalTimeComponents(timezone) {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(now);
+    const components = {};
+    parts.forEach(p => { components[p.type] = p.value; });
+    
+    const dateString = `${components.year}-${components.month}-${components.day}`;
+    const timeString = `${components.hour}:${components.minute}`;
+    
+    return { 
+      dateString, 
+      timeString, 
+      hour: parseInt(components.hour, 10), 
+      minute: parseInt(components.minute, 10) 
+    };
+  } catch (err) {
+    console.error(`Timezone formatting failed for ${timezone}:`, err);
+    return getLocalTimeComponents('Asia/Kolkata');
+  }
+}
+
+// Helper to check if a past date is "today" in a given timezone
+function isTodayInTimezone(dateToCheck, timezone, currentDateString) {
+  if (!dateToCheck) return false;
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(new Date(dateToCheck));
+    const components = {};
+    parts.forEach(p => { components[p.type] = p.value; });
+    const formattedDate = `${components.year}-${components.month}-${components.day}`;
+    return formattedDate === currentDateString;
+  } catch (err) {
+    return false;
+  }
+}
+
 async function runNotificationCheck() {
   console.log('Starting push notification cron check...');
   
-  // A. Fetch all pending movements
-  const { data: movements, error: movementsError } = await supabase
-    .from('planned_movements')
-    .select('*')
-    .eq('status', 'pending');
-
-  if (movementsError) {
-    console.error('Error fetching planned movements:', movementsError);
-    return;
-  }
-
-  if (!movements || movements.length === 0) {
-    console.log('No pending movements found.');
-    return;
-  }
-
-  // B. Fetch all push subscriptions
+  // A. Fetch all active subscriptions
   const { data: subscriptions, error: subsError } = await supabase
     .from('push_subscriptions')
     .select('*');
@@ -76,72 +113,139 @@ async function runNotificationCheck() {
     return;
   }
 
-  console.log(`Checking ${movements.length} movements against ${subscriptions.length} subscriptions...`);
+  // B. Fetch all pending movements
+  const { data: movements, error: movementsError } = await supabase
+    .from('planned_movements')
+    .select('*')
+    .eq('status', 'pending');
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // C. Fetch all custom general reminders
+  const { data: generalReminders, error: remindersError } = await supabase
+    .from('general_reminders')
+    .select('*');
 
-  for (const item of movements) {
-    const dueDate = new Date(item.due_date);
-    dueDate.setHours(0, 0, 0, 0);
+  let totalNotificationsSent = 0;
 
-    const diffTime = dueDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  for (const sub of subscriptions) {
+    const tz = sub.timezone || 'Asia/Kolkata';
+    const localTime = getLocalTimeComponents(tz);
+    console.log(`Checking device subscription ${sub.id} (Timezone: ${tz}, Local Time: ${localTime.dateString} ${localTime.timeString})`);
 
-    // Check if within reminder window
-    if (diffDays >= 0 && diffDays <= item.reminder_days_before) {
-      // Check if already notified today
-      const lastNotified = item.last_notified_at ? new Date(item.last_notified_at) : null;
-      const alreadyNotifiedToday = lastNotified && lastNotified.toDateString() === today.toDateString();
+    // --- 1. CHECK PLANNED MOVEMENTS (Daily check at 10:00 AM Local Time) ---
+    // Note: If running manually, we bypass the 10:00 AM constraint to allow immediate testing.
+    const isManualRun = process.argv.includes('--force') || process.argv.includes('-f');
+    const isCheckTime = localTime.hour === 10 || isManualRun;
 
-      if (alreadyNotifiedToday) {
-        console.log(`Skipping "${item.title}" - already notified today.`);
-        continue;
-      }
+    if (isCheckTime && !movementsError && movements && movements.length > 0) {
+      for (const item of movements) {
+        const dueDate = new Date(item.due_date);
+        dueDate.setHours(0, 0, 0, 0);
 
-      const typeLabel = item.type === 'subscription' ? 'Subscription' : item.type === 'debt_taken' ? 'Return' : 'Collect';
-      const notificationPayload = JSON.stringify({
-        title: `FinControl: ${typeLabel} Due`,
-        body: `${item.title} (₹${Number(item.amount).toLocaleString()}) is due ${diffDays === 0 ? 'today' : 'in ' + diffDays + ' day(s)'}!`,
-      });
+        const localToday = new Date();
+        localToday.setHours(0, 0, 0, 0);
+        
+        const diffTime = dueDate.getTime() - localToday.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-      console.log(`Sending push notifications for "${item.title}"...`);
+        if (diffDays >= 0 && diffDays <= item.reminder_days_before) {
+          const alreadyNotified = isTodayInTimezone(item.last_notified_at, tz, localTime.dateString);
+          if (alreadyNotified && !isManualRun) continue;
 
-      let sendSuccess = false;
+          const typeLabel = item.type === 'subscription' ? 'Subscription' : item.type === 'debt_taken' ? 'Return' : 'Collect';
+          const payload = JSON.stringify({
+            title: `FinControl: ${typeLabel} Due`,
+            body: `${item.title} (₹${Number(item.amount).toLocaleString()}) is due ${diffDays === 0 ? 'today' : 'in ' + diffDays + ' day(s)'}!`,
+          });
 
-      for (const sub of subscriptions) {
-        try {
-          await webpush.sendNotification(sub.subscription, notificationPayload);
-          sendSuccess = true;
-          console.log(`Successfully sent push to subscription ID: ${sub.id}`);
-        } catch (pushErr) {
-          console.error(`Error sending push to subscription ID: ${sub.id}`, pushErr.statusCode);
-          // If subscription has expired or is invalid, remove it
-          if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
-            console.log(`Removing expired/invalid subscription ID: ${sub.id}`);
+          try {
+            console.log(`Sending planned movement push for "${item.title}" to device...`);
+            await webpush.sendNotification(sub.subscription, payload);
+            totalNotificationsSent++;
+
             await supabase
-              .from('push_subscriptions')
-              .delete()
-              .eq('id', sub.id);
+              .from('planned_movements')
+              .update({ last_notified_at: new Date().toISOString() })
+              .eq('id', item.id);
+          } catch (pushErr) {
+            console.error(`Push failed:`, pushErr.statusCode);
+            if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+              await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+              break;
+            }
           }
         }
       }
+    }
 
-      if (sendSuccess) {
-        // Update database to note we notified today
-        const { error: updateError } = await supabase
-          .from('planned_movements')
-          .update({ last_notified_at: new Date().toISOString() })
-          .eq('id', item.id);
-        
-        if (updateError) {
-          console.error(`Failed to update last_notified_at for ${item.title}:`, updateError);
+    // --- 2. CHECK GENERAL REMINDERS (Hourly check) ---
+    if (!remindersError && generalReminders && generalReminders.length > 0) {
+      for (const rem of generalReminders) {
+        if (rem.type === 'daily') {
+          const remHour = parseInt(rem.reminder_time.substring(0, 2), 10);
+          const hourMatches = remHour === localTime.hour || isManualRun;
+          
+          if (hourMatches) {
+            const alreadyNotified = isTodayInTimezone(rem.last_notified_at, tz, localTime.dateString);
+            if (alreadyNotified && !isManualRun) continue;
+
+            const payload = JSON.stringify({
+              title: rem.title,
+              body: rem.body,
+            });
+
+            try {
+              console.log(`Sending daily custom reminder "${rem.title}" to device...`);
+              await webpush.sendNotification(sub.subscription, payload);
+              totalNotificationsSent++;
+
+              await supabase
+                .from('general_reminders')
+                .update({ last_notified_at: new Date().toISOString() })
+                .eq('id', rem.id);
+            } catch (pushErr) {
+              console.error(`Push failed:`, pushErr.statusCode);
+              if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+                await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+                break;
+              }
+            }
+          }
+        } else if (rem.type === 'one-off') {
+          const remDate = rem.reminder_date;
+          const remHour = parseInt(rem.reminder_time.substring(0, 2), 10);
+          const isMatch = (remDate === localTime.dateString && remHour === localTime.hour) || isManualRun;
+          
+          if (isMatch) {
+            if (rem.last_notified_at && !isManualRun) continue;
+
+            const payload = JSON.stringify({
+              title: rem.title,
+              body: rem.body,
+            });
+
+            try {
+              console.log(`Sending one-time custom reminder "${rem.title}" to device...`);
+              await webpush.sendNotification(sub.subscription, payload);
+              totalNotificationsSent++;
+
+              await supabase
+                .from('general_reminders')
+                .update({ last_notified_at: new Date().toISOString() })
+                .eq('id', rem.id);
+            } catch (pushErr) {
+              console.error(`Push failed:`, pushErr.statusCode);
+              if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+                await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+                break;
+              }
+            }
+          }
         }
       }
     }
   }
 
-  console.log('Push notification check complete.');
+  console.log(`Push notification check complete. Sent ${totalNotificationsSent} notifications.`);
 }
 
 runNotificationCheck().catch(err => {
