@@ -140,6 +140,10 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [plannedItems, setPlannedItems] = useState<PlannedMovement[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Modal states for partial/full payment
+  const [settlingItem, setSettlingItem] = useState<PlannedMovement | null>(null);
+  const [settleAmount, setSettleAmount] = useState('');
   const [pushEnabled, setPushEnabled] = useState(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       return Notification.permission === 'granted';
@@ -505,42 +509,102 @@ const App: React.FC = () => {
     }
   };
 
-  const markAsPaid = async (item: PlannedMovement) => {
+  const handleRepaySubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!settlingItem) return;
+    
+    const amountToPay = parseFloat(settleAmount);
+    if (isNaN(amountToPay) || amountToPay <= 0) {
+      alert('Please enter a valid amount.');
+      return;
+    }
+    if (amountToPay > settlingItem.amount) {
+      alert('Repayment amount cannot exceed the outstanding amount.');
+      return;
+    }
+
     try {
-      // 1. Mark as paid
-      const { error: updateError } = await supabase
-        .from('planned_movements')
-        .update({ status: 'paid' })
-        .eq('id', item.id);
-      
-      if (updateError) throw updateError;
+      const isFullPayment = amountToPay === settlingItem.amount;
 
-      // 2. Log actual transaction
-      const payload = {
-        type: item.type === 'debt_given' ? 'inflow' : 'outflow',
-        amount: item.amount,
-        tier1_category: item.type === 'subscription' ? 'Bills' : 'Debt',
-        tier2_memo: `Settled: ${item.title}`,
-        date: new Date().toISOString()
-      };
-      await supabase.from('transactions').insert([payload]);
-
-      // 3. If recurring, create next month's entry
-      if (item.is_recurring) {
-        const nextDate = new Date(item.due_date);
-        nextDate.setMonth(nextDate.getMonth() + 1);
-        await supabase.from('planned_movements').insert([{
-          ...item,
-          id: undefined,
-          due_date: nextDate.toISOString().split('T')[0],
-          status: 'pending',
-          created_at: undefined
-        }]);
+      if (isFullPayment) {
+        // 1. Mark as paid
+        const { error: updateError } = await supabase
+          .from('planned_movements')
+          .update({ status: 'paid' })
+          .eq('id', settlingItem.id);
+        if (updateError) throw updateError;
+      } else {
+        // 2. Partial payment: Update amount in planned_movements
+        const remainingAmount = settlingItem.amount - amountToPay;
+        const { error: updateError } = await supabase
+          .from('planned_movements')
+          .update({ amount: remainingAmount })
+          .eq('id', settlingItem.id);
+        if (updateError) throw updateError;
       }
 
+      // 3. Log the transaction in the ledger
+      const payload = {
+        type: settlingItem.type === 'debt_given' ? 'inflow' : 'outflow',
+        amount: amountToPay,
+        tier1_category: settlingItem.type === 'subscription' ? 'Bills' : 'Debt',
+        tier2_memo: isFullPayment 
+          ? `Settled: ${settlingItem.title}` 
+          : `Partial Settle: ${settlingItem.title} (Remaining: ₹${(settlingItem.amount - amountToPay).toLocaleString()})`,
+        date: new Date().toISOString()
+      };
+      const { error: insertError } = await supabase.from('transactions').insert([payload]);
+      if (insertError) throw insertError;
+
+      setSettlingItem(null);
       fetchData();
     } catch (err: any) {
       alert(`Error: ${err.message}`);
+    }
+  };
+
+  const markAsPaid = async (item: PlannedMovement) => {
+    if (item.type === 'subscription') {
+      try {
+        // Mark as paid
+        const { error: updateError } = await supabase
+          .from('planned_movements')
+          .update({ status: 'paid' })
+          .eq('id', item.id);
+        
+        if (updateError) throw updateError;
+
+        // Log actual transaction
+        const payload = {
+          type: 'outflow',
+          amount: item.amount,
+          tier1_category: 'Bills',
+          tier2_memo: `Settled: ${item.title}`,
+          date: new Date().toISOString()
+        };
+        await supabase.from('transactions').insert([payload]);
+
+        // If recurring, create next month's entry
+        if (item.is_recurring) {
+          const nextDate = new Date(item.due_date);
+          nextDate.setMonth(nextDate.getMonth() + 1);
+          await supabase.from('planned_movements').insert([{
+            ...item,
+            id: undefined,
+            due_date: nextDate.toISOString().split('T')[0],
+            status: 'pending',
+            created_at: undefined
+          }]);
+        }
+
+        fetchData();
+      } catch (err: any) {
+        alert(`Error: ${err.message}`);
+      }
+    } else {
+      // It's a debt, open modal for full or partial repayment
+      setSettlingItem(item);
+      setSettleAmount(item.amount.toString());
     }
   };
 
@@ -548,6 +612,17 @@ const App: React.FC = () => {
     if (!confirm('Delete this plan?')) return;
     try {
       const { error } = await supabase.from('planned_movements').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    if (!confirm('Delete this transaction record?')) return;
+    try {
+      const { error } = await supabase.from('transactions').delete().eq('id', id);
       if (error) throw error;
       fetchData();
     } catch (err: any) {
@@ -1128,8 +1203,17 @@ const App: React.FC = () => {
                           {new Date(t.date).toLocaleDateString()} {t.behavioral_source && `• ${t.behavioral_source}`}
                         </small>
                       </div>
-                      <div className={`transaction-amount ${t.type === 'inflow' ? 'positive' : 'negative'}`}>
-                        {t.type === 'inflow' ? '+' : '-'}₹{Number(t.amount).toLocaleString()}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div className={`transaction-amount ${t.type === 'inflow' ? 'positive' : 'negative'}`}>
+                          {t.type === 'inflow' ? '+' : '-'}₹{Number(t.amount).toLocaleString()}
+                        </div>
+                        <button 
+                          onClick={() => deleteTransaction(t.id)} 
+                          style={{ background: 'none', border: 'none', color: 'var(--accent-outflow)', cursor: 'pointer', display: 'flex', alignItems: 'center' }} 
+                          title="Delete transaction"
+                        >
+                          <Trash2 size={18} />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1137,6 +1221,49 @@ const App: React.FC = () => {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {settlingItem && (
+        <div className="modal-overlay" onClick={() => setSettlingItem(null)}>
+          <div className="card modal-content" style={{ maxWidth: '400px', width: '100%', margin: '0 auto' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: '1rem' }}>Settle planned movement</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              {settlingItem.title} • Current outstanding balance: <strong>₹{settlingItem.amount.toLocaleString()}</strong>
+            </p>
+            
+            <form onSubmit={handleRepaySubmit}>
+              <div className="input-group">
+                <label>Repayment Amount (₹)</label>
+                <input 
+                  type="number" 
+                  value={settleAmount} 
+                  onChange={(e) => setSettleAmount(e.target.value)} 
+                  placeholder="0.00"
+                  inputMode="decimal"
+                  required 
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+                <button 
+                  type="button" 
+                  className="toggle-btn" 
+                  style={{ width: 'auto', padding: '0.5rem 1rem' }}
+                  onClick={() => setSettlingItem(null)}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ width: 'auto', padding: '0.5rem 1.5rem', margin: 0 }}
+                >
+                  Confirm Settle
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
