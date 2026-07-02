@@ -39,6 +39,20 @@ interface GeneralReminder {
   reminder_date?: string;
 }
 
+interface ParsedTx {
+  id: string;
+  date: string;
+  details: string;
+  type: 'inflow' | 'outflow';
+  amount: number;
+  txId: string;
+  utr: string;
+  account: string;
+  selected: boolean;
+  category: string;
+  projectId: string;
+}
+
 const ActivityRing: React.FC<{ 
   percentage: number; 
   color: string; 
@@ -144,6 +158,16 @@ const App: React.FC = () => {
   // Modal states for partial/full payment
   const [settlingItem, setSettlingItem] = useState<PlannedMovement | null>(null);
   const [settleAmount, setSettleAmount] = useState('');
+
+  // PhonePe PDF import states
+  const [inputMode, setInputMode] = useState<'manual' | 'phonepe'>('manual');
+  const [parsedTxs, setParsedTxs] = useState<ParsedTx[]>([]);
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfFileBuffer, setPdfFileBuffer] = useState<ArrayBuffer | null>(null);
+  const [passwordRequired, setPasswordRequired] = useState(false);
+  const [parsingError, setParsingError] = useState('');
+  const [isParsing, setIsParsing] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       return Notification.permission === 'granted';
@@ -291,6 +315,236 @@ const App: React.FC = () => {
       alert('Reminder added successfully!');
     } catch (err) {
       alert('Error adding reminder: ' + (err as Error).message);
+    }
+  };
+
+  const getSuggestedCategory = (details: string, type: 'inflow' | 'outflow') => {
+    const text = details.toLowerCase();
+    if (type === 'inflow') return 'Income';
+    
+    if (text.includes('google') || text.includes('netflix') || text.includes('spotify') || text.includes('recharge') || text.includes('broadband')) {
+      return 'Bills';
+    }
+    if (text.includes('swiggy') || text.includes('zomato') || text.includes('zepto') || text.includes('dabha') || text.includes('mess') || text.includes('bake') || text.includes('restaurant') || text.includes('food') || text.includes('tea')) {
+      return 'Food';
+    }
+    if (text.includes('ola') || text.includes('uber') || text.includes('apsrtc') || text.includes('metro') || text.includes('fuel') || text.includes('petrol') || text.includes('travel') || text.includes('wash')) {
+      return 'Travel';
+    }
+    if (text.includes('footwear') || text.includes('mart') || text.includes('traders') || text.includes('amazon') || text.includes('flipkart') || text.includes('myntra') || text.includes('clothing')) {
+      return 'Shopping';
+    }
+    return 'Miscellaneous';
+  };
+
+  const extractPhonePeTransactions = (text: string): ParsedTx[] => {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const txs: ParsedTx[] = [];
+    
+    let i = 0;
+    let idx = 0;
+    while (i < lines.length) {
+      const dateMatch = lines[i].match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2},\s+\d{4}$/);
+      if (!dateMatch) {
+        i++;
+        continue;
+      }
+      const date = lines[i];
+      
+      if (i + 1 >= lines.length) break;
+      const timeMatch = lines[i+1].match(/^\d{2}:\d{2}\s+(AM|PM)$/);
+      if (!timeMatch) {
+        i++;
+        continue;
+      }
+      const time = lines[i+1];
+      
+      if (i + 2 >= lines.length) break;
+      const details = lines[i+2];
+      
+      let txId = '';
+      let utr = '';
+      let account = '';
+      let amountLine = '';
+      
+      let j = i + 3;
+      while (j < Math.min(i + 10, lines.length)) {
+        const line = lines[j];
+        if (line.startsWith('Transaction ID :')) {
+          txId = line.replace('Transaction ID :', '').trim();
+        } else if (line.startsWith('UTR No :')) {
+          utr = line.replace('UTR No :', '').trim();
+        } else if (line.startsWith('Credited to') || line.startsWith('Debited from')) {
+          account = line.trim();
+        } else if (line.match(/^(Credit|Debit) INR\s+/)) {
+          amountLine = line;
+          break;
+        }
+        j++;
+      }
+      
+      if (amountLine) {
+        const amountMatch = amountLine.match(/^(Credit|Debit) INR\s+([\d,.]+)/);
+        if (amountMatch) {
+          const type = amountMatch[1] === 'Credit' ? 'inflow' : 'outflow';
+          const amount = parseFloat(amountMatch[2].replace(/,/g, ''));
+          
+          let title = details;
+          if (title.startsWith('Paid to ')) {
+            title = title.replace('Paid to ', '');
+          } else if (title.startsWith('Received from ')) {
+            title = title.replace('Received from ', '');
+          }
+          
+          let parsedDateString = `${date} ${time}`;
+          let isoDate = new Date().toISOString();
+          try {
+            const parsedDate = new Date(parsedDateString);
+            if (!isNaN(parsedDate.getTime())) {
+              isoDate = parsedDate.toISOString();
+            }
+          } catch (e) {}
+          
+          txs.push({
+            id: `tx_${idx++}`,
+            date: isoDate,
+            details: title,
+            type,
+            amount,
+            txId,
+            utr,
+            account,
+            selected: true,
+            category: getSuggestedCategory(title, type),
+            projectId: ''
+          });
+        }
+        i = j + 1;
+      } else {
+        i++;
+      }
+    }
+    
+    return txs;
+  };
+
+  const loadScript = (src: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = () => resolve();
+      script.onerror = () => reject();
+      document.head.appendChild(script);
+    });
+  };
+
+  const parsePdfBuffer = async (buffer: ArrayBuffer, password = '') => {
+    setIsParsing(true);
+    setParsingError('');
+    
+    if (!(window as any).pdfjsLib) {
+      try {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js');
+        (window as any).pdfjsLib = (window as any)['pdfjs-dist/build/pdf'];
+        (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+      } catch (err) {
+        setParsingError('Failed to load PDF parser. Please check your internet connection.');
+        setIsParsing(false);
+        return;
+      }
+    }
+    
+    const pdfjsLib = (window as any).pdfjsLib;
+    
+    try {
+      const loadingTask = pdfjsLib.getDocument({
+        data: buffer,
+        password: password
+      });
+      
+      const pdf = await loadingTask.promise;
+      let fullText = '';
+      
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join('\n');
+        fullText += pageText + '\n';
+      }
+      
+      const txs = extractPhonePeTransactions(fullText);
+      setParsedTxs(txs);
+      setPasswordRequired(false);
+    } catch (err: any) {
+      if (err.name === 'PasswordException' || err.code === 1) {
+        setPasswordRequired(true);
+      } else {
+        console.error(err);
+        setParsingError('Error parsing PDF: ' + err.message);
+      }
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setPdfFile(file);
+    setParsingError('');
+    setPasswordRequired(false);
+    setPdfPassword('');
+    
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const buffer = reader.result as ArrayBuffer;
+      setPdfFileBuffer(buffer);
+      await parsePdfBuffer(buffer, '');
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pdfFileBuffer) return;
+    await parsePdfBuffer(pdfFileBuffer, pdfPassword);
+  };
+
+  const handleImportSubmit = async () => {
+    const selectedTxs = parsedTxs.filter(t => t.selected);
+    if (selectedTxs.length === 0) {
+      alert('No transactions selected.');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const payloads = selectedTxs.map(t => ({
+        type: t.type,
+        amount: t.amount,
+        date: t.date,
+        tier1_category: t.category,
+        tier2_memo: `${t.details} (PhonePe UTR: ${t.utr})`,
+        project_id: t.projectId || null
+      }));
+      
+      const { error } = await supabase
+        .from('transactions')
+        .insert(payloads);
+        
+      if (error) throw error;
+      
+      alert(`Successfully imported ${payloads.length} transactions into the ledger!`);
+      setParsedTxs([]);
+      setPdfFile(null);
+      setPdfFileBuffer(null);
+      setInputMode('manual');
+      fetchData();
+    } catch (err: any) {
+      alert('Error importing transactions: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -703,114 +957,273 @@ const App: React.FC = () => {
       </nav>
 
       {activeTab === 'input' ? (
-        <div className="card">
-          <h2 style={{ marginBottom: '1.5rem' }}>Record Movement</h2>
-          
-          <div className="toggle-container">
+        <div>
+          {/* Sub Tab Toggle (Manual vs PhonePe) */}
+          <div className="toggle-container" style={{ marginBottom: '1.5rem' }}>
             <button 
-              className={`toggle-btn ${type === 'inflow' ? 'active inflow' : ''}`}
-              onClick={() => setType('inflow')}
+              type="button" 
+              className={`toggle-btn ${inputMode === 'manual' ? 'active' : ''}`}
+              onClick={() => setInputMode('manual')}
             >
-              <ArrowUpRight size={20} /> Earned
+              Manual Log
             </button>
             <button 
-              className={`toggle-btn ${type === 'outflow' ? 'active outflow' : ''}`}
-              onClick={() => setType('outflow')}
+              type="button" 
+              className={`toggle-btn ${inputMode === 'phonepe' ? 'active' : ''}`}
+              onClick={() => setInputMode('phonepe')}
             >
-              <ArrowDownRight size={20} /> Spent
+              Import PhonePe PDF
             </button>
           </div>
 
-          <form onSubmit={handleSubmit}>
-            <div className="input-grid" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <div className="input-group">
-                  <label>Amount (₹)</label>
-                  <input 
-                    type="number" 
-                    value={amount} 
-                    onChange={(e) => setAmount(e.target.value)} 
-                    placeholder="0.00" 
-                    inputMode="decimal"
-                    required 
-                  />
-                </div>
-                <div className="input-group">
-                  <label>Date</label>
-                  <input 
-                    type="date" 
-                    value={transactionDate} 
-                    onChange={(e) => setTransactionDate(e.target.value)} 
-                    required 
-                  />
-                </div>
+          {inputMode === 'manual' ? (
+            <div className="card" style={{ marginTop: 0 }}>
+              <h2 style={{ marginBottom: '1.5rem' }}>Record Movement</h2>
+              
+              <div className="toggle-container">
+                <button 
+                  type="button"
+                  className={`toggle-btn ${type === 'inflow' ? 'active inflow' : ''}`}
+                  onClick={() => setType('inflow')}
+                >
+                  <ArrowUpRight size={20} /> Earned
+                </button>
+                <button 
+                  type="button"
+                  className={`toggle-btn ${type === 'outflow' ? 'active outflow' : ''}`}
+                  onClick={() => setType('outflow')}
+                >
+                  <ArrowDownRight size={20} /> Spent
+                </button>
               </div>
-              <div className="input-group">
-                <label>{type === 'inflow' ? 'Source' : 'Category'}</label>
-                {type === 'inflow' ? (
-                  <select value={category} onChange={(e) => setCategory(e.target.value)} required>
-                    <option value="">Select Source</option>
-                    <option value="Salary">Salary</option>
-                    <option value="Freelance">Freelance</option>
-                    <option value="Family">Family</option>
-                    <option value="Passive">Investment/Passive</option>
-                    <option value="Gift">Gift/Other</option>
-                  </select>
-                ) : (
-                  <select value={category} onChange={(e) => setCategory(e.target.value)} required>
-                    <option value="">Select Category</option>
-                    <option value="Food">Food & Dining</option>
-                    <option value="Travel">Travel</option>
-                    <option value="Bills">Fixed Bills</option>
-                    <option value="Shopping">Shopping</option>
-                    <option value="Health">Health</option>
-                    <option value="Investment">Investment</option>
-                  </select>
-                )}
-              </div>
-              <div className="input-group">
-                <label>Project (Optional)</label>
-                <select value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
-                  <option value="">No Project</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
 
-            {type === 'inflow' && (
+              <form onSubmit={handleSubmit}>
+                <div className="input-grid" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    <div className="input-group">
+                      <label>Amount (₹)</label>
+                      <input 
+                        type="number" 
+                        value={amount} 
+                        onChange={(e) => setAmount(e.target.value)} 
+                        placeholder="0.00" 
+                        inputMode="decimal"
+                        required 
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Date</label>
+                      <input 
+                        type="date" 
+                        value={transactionDate} 
+                        onChange={(e) => setTransactionDate(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    <div className="input-group">
+                      <label>Tier 1 Category</label>
+                      {type === 'inflow' ? (
+                        <select value={category} onChange={(e) => setCategory(e.target.value)} required>
+                          <option value="">Select Category</option>
+                          <option value="Income">Salary / Income</option>
+                          <option value="Passive">Passive Income</option>
+                          <option value="Bonus">Bonus / Payout</option>
+                          <option value="Reimbursement">Reimbursement</option>
+                        </select>
+                      ) : (
+                        <select value={category} onChange={(e) => setCategory(e.target.value)} required>
+                          <option value="">Select Category</option>
+                          <option value="Food">Food / Dining</option>
+                          <option value="Travel">Travel / Transport</option>
+                          <option value="Shopping">Shopping / Clothing</option>
+                          <option value="Bills">Bills / Recharges</option>
+                          <option value="Miscellaneous">Miscellaneous</option>
+                          <option value="Health">Health</option>
+                          <option value="Investment">Investment</option>
+                        </select>
+                      )}
+                    </div>
+                    <div className="input-group">
+                      <label>Project (Optional)</label>
+                      <select value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
+                        <option value="">No Project</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {type === 'inflow' && (
+                    <div className="input-group">
+                      <label>Behavioral Nature</label>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        {['regular', 'active', 'passive'].map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            className={`toggle-btn ${source === s ? 'active' : ''}`}
+                            style={{ padding: '0.5rem', fontSize: '0.8rem' }}
+                            onClick={() => setSource(s)}
+                          >
+                            {s.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="input-group">
+                    <label>Memo (Tier 2 Granularity)</label>
+                    <textarea 
+                      value={memo} 
+                      onChange={(e) => setMemo(e.target.value)} 
+                      placeholder={type === 'inflow' ? "e.g. Project X final payout" : "e.g. Dinner with team at Lucknow"}
+                      rows={3}
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="btn-primary">Save to Ledger</button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div className="card" style={{ marginTop: 0 }}>
+              <h2 style={{ marginBottom: '1.5rem' }}>Import PhonePe Statement</h2>
+              
               <div className="input-group">
-                <label>Behavioral Nature</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  {['regular', 'active', 'passive'].map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      className={`toggle-btn ${source === s ? 'active' : ''}`}
-                      style={{ padding: '0.5rem', fontSize: '0.8rem' }}
-                      onClick={() => setSource(s)}
-                    >
-                      {s.toUpperCase()}
+                <label>Select PhonePe PDF Statement</label>
+                <input 
+                  type="file" 
+                  accept="application/pdf" 
+                  onChange={handleFileChange}
+                  style={{ padding: '0.5rem' }}
+                />
+              </div>
+
+              {pdfFile && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.75rem', marginBottom: '1.25rem' }}>
+                  Selected File: <strong>{pdfFile.name}</strong>
+                </p>
+              )}
+
+              {isParsing && (
+                <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '1.5rem 0' }}>
+                  Decrypting and parsing PDF statement...
+                </p>
+              )}
+
+              {passwordRequired && (
+                <form onSubmit={handlePasswordSubmit} style={{ background: 'rgba(255, 77, 77, 0.05)', padding: '1.25rem', borderRadius: '12px', border: '1px solid var(--accent-outflow)', marginBottom: '1.5rem' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--accent-outflow)', marginTop: 0, marginBottom: '0.75rem', fontWeight: 600 }}>
+                    This PDF is encrypted. Enter your PhonePe password (typically your 10-digit registered mobile number):
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input 
+                      type="password" 
+                      value={pdfPassword} 
+                      onChange={(e) => setPdfPassword(e.target.value)} 
+                      placeholder="e.g. 9133095695"
+                      required
+                      style={{ background: 'rgba(0,0,0,0.4)', flex: 1 }}
+                    />
+                    <button type="submit" className="btn-primary" style={{ width: 'auto', margin: 0, padding: '0.75rem 1.5rem' }}>
+                      Unlock
                     </button>
-                  ))}
+                  </div>
+                </form>
+              )}
+
+              {parsingError && (
+                <p style={{ color: 'var(--accent-outflow)', fontSize: '0.85rem', marginBottom: '1.5rem', fontWeight: 600 }}>
+                  {parsingError}
+                </p>
+              )}
+
+              {parsedTxs.length > 0 && (
+                <div style={{ marginTop: '1.5rem' }}>
+                  <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Review Transactions ({parsedTxs.length} items found)</h3>
+                  
+                  <div className="transaction-list" style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '12px', padding: '0.5rem', marginBottom: '1.5rem' }}>
+                    {parsedTxs.map((tx, idx) => (
+                      <div key={tx.id} className="transaction-item" style={{ display: 'flex', gap: '0.75rem', padding: '0.75rem 0' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={tx.selected}
+                          onChange={(e) => {
+                            const copy = [...parsedTxs];
+                            copy[idx].selected = e.target.checked;
+                            setParsedTxs(copy);
+                          }}
+                          style={{ width: '20px', height: '20px', cursor: 'pointer', alignSelf: 'center' }}
+                        />
+                        
+                        <div style={{ flex: 1 }}>
+                          <h4 style={{ margin: 0, fontSize: '0.9rem' }}>{tx.details}</h4>
+                          <small style={{ color: 'var(--text-secondary)', display: 'block', margin: '0.1rem 0' }}>
+                            {new Date(tx.date).toLocaleDateString()} • {tx.account}
+                          </small>
+                          
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem', marginTop: '0.4rem' }}>
+                            <select 
+                              value={tx.category} 
+                              onChange={(e) => {
+                                const copy = [...parsedTxs];
+                                copy[idx].category = e.target.value;
+                                setParsedTxs(copy);
+                              }}
+                              style={{ fontSize: '0.75rem', padding: '0.25rem' }}
+                            >
+                              <option value="Food">Food / Dining</option>
+                              <option value="Travel">Travel / Transport</option>
+                              <option value="Bills">Bills / Recharges</option>
+                              <option value="Shopping">Shopping / Clothing</option>
+                              <option value="Income">Income</option>
+                              <option value="Miscellaneous">Miscellaneous</option>
+                              <option value="Health">Health</option>
+                              <option value="Investment">Investment</option>
+                            </select>
+                            
+                            <select 
+                              value={tx.projectId} 
+                              onChange={(e) => {
+                                const copy = [...parsedTxs];
+                                copy[idx].projectId = e.target.value;
+                                setParsedTxs(copy);
+                              }}
+                              style={{ fontSize: '0.75rem', padding: '0.25rem' }}
+                            >
+                              <option value="">No Project</option>
+                              {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className={`transaction-amount ${tx.type === 'inflow' ? 'positive' : 'negative'}`} style={{ alignSelf: 'center', fontSize: '0.95rem' }}>
+                          {tx.type === 'inflow' ? '+' : '-'}₹{tx.amount.toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button 
+                    type="button" 
+                    className="btn-primary"
+                    onClick={handleImportSubmit}
+                    disabled={loading}
+                  >
+                    {loading ? 'Importing...' : `Import Selected (${parsedTxs.filter(t => t.selected).length} transactions)`}
+                  </button>
                 </div>
-              </div>
-            )}
-
-            <div className="input-group">
-              <label>Memo (Tier 2 Granularity)</label>
-              <textarea 
-                value={memo} 
-                onChange={(e) => setMemo(e.target.value)} 
-                placeholder={type === 'inflow' ? "e.g. Project X final payout" : "e.g. Dinner with team at Lucknow"}
-                rows={3}
-                required
-              />
+              )}
             </div>
-
-            <button type="submit" className="btn-primary">Save to Ledger</button>
-          </form>
+          )}
         </div>
       ) : activeTab === 'recurring' ? (
         <div>
