@@ -276,7 +276,7 @@ const App: React.FC = () => {
         title: remTitle,
         body: remBody,
         type: remType,
-        reminder_time: remType === 'daily' ? remTime : null,
+        reminder_time: remTime,
         reminder_date: remType === 'one-off' ? remDate : null,
       };
       const { error } = await supabase
