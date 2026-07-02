@@ -890,9 +890,16 @@ const App: React.FC = () => {
   return (
     <div className="container">
       <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h1 style={{ color: 'var(--accent-blue)', margin: 0, fontSize: '1.75rem' }}>FinControl</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 500 }}>PROFESSIONAL LEDGER</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <img 
+            src="/logo.png" 
+            alt="FinControl Logo" 
+            style={{ width: '42px', height: '42px', borderRadius: '10px', objectFit: 'cover', border: '1px solid var(--border)' }}
+          />
+          <div>
+            <h1 style={{ color: 'var(--accent-blue)', margin: 0, fontSize: '1.75rem', lineHeight: '1.1' }}>FinControl</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, margin: 0 }}>PROFESSIONAL LEDGER</p>
+          </div>
         </div>
         <div className="header-nav" style={{ display: 'flex', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.4rem', borderRadius: '14px', border: '1px solid var(--border)' }}>
           <button 
