@@ -1,0 +1,31 @@
+name: Trigger Push Notifications
+    
+    on:
+      schedule:
+        - cron: '0 * * * *' # Run hourly in the cloud for free!
+      workflow_dispatch: # Allows you to manually trigger it from the Actions tab
+    
+    jobs:
+      send-push:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout Code
+            uses: actions/checkout@v4
+
+          - name: Set up Node.js
+            uses: actions/setup-node@v4
+            with:
+              node-version: 20
+              cache: 'npm'
+
+          - name: Install Dependencies
+            run: npm ci
+
+          - name: Run Push Notification Script
+            env:
+              VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+              VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+              VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+              VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+            run: node send_push.js
+
