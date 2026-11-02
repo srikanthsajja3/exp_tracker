@@ -1,0 +1,9 @@
+<resources>
+  <string name="app_name">Expense Tracker</string>
+  <string name="shortcut_add_expense_short">Add Expense</string>
+  <string name="shortcut_add_expense_long">Quick Add Expense</string>
+  <string name="shortcut_scan_sms_short">Scan SMS</string>
+  <string name="shortcut_scan_sms_long">Scan Bank SMS</string>
+  <string name="widget_name">Expense Quick Actions</string>
+  <string name="widget_description">1-Tap Add Expense and Scan SMS shortcuts</string>
+</resources>

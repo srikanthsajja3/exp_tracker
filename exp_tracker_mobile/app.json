@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Expense Tracker",
+    "slug": "exp_tracker_mobile",
+    "scheme": "expensetracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "android": {
+      "package": "com.expensetracker.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "permissions": [
+        "READ_SMS",
+        "RECEIVE_SMS",
+        "NOTIFICATIONS",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#38BDF8"
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "550618f6-5b06-4a86-a1ec-7077cbd432ff"
+      }
+    },
+    "owner": "runnnnnnnnn"
+  }
+}

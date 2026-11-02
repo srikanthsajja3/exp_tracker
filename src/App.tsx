@@ -112,6 +112,8 @@ const ActivityRing: React.FC<{
   );
 };
 
+
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding)
@@ -152,6 +154,7 @@ const App: React.FC = () => {
     const saved = Number(localStorage.getItem('fin_budget'));
     return (saved && saved >= 10000) ? saved : 50000;
   });
+  const [excludeInternal, setExcludeInternal] = useState(true);
 
   const [summary, setSummary] = useState({ gross_revenue: 0, gross_expenses: 0, net_profit: 0 });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -171,6 +174,7 @@ const App: React.FC = () => {
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [parsingError, setParsingError] = useState('');
   const [isParsing, setIsParsing] = useState(false);
+  const [hasParsed, setHasParsed] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       return Notification.permission === 'granted';
@@ -340,74 +344,251 @@ const App: React.FC = () => {
     return 'Miscellaneous';
   };
 
+  const extractBankOrPhonePeTransactions = (text: string): ParsedTx[] => {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    let txs: ParsedTx[] = [];
+    let idx = 0;
+
+    // --- Method A: HDFC / Tabular Bank Statement Parser ---
+    const dateRegexHdfc = /^(\d{2}\/\d{2}\/\d{2,4})(.+)/;
+    const bankEntries: { date: string; full: string }[] = [];
+    
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const m = line.match(dateRegexHdfc);
+      if (m && !line.includes('From :') && !line.includes('Statement of account') && !line.includes('Page No')) {
+        const dateStr = m[1];
+        const rest = m[2];
+        const entryLines = [rest];
+        let j = i + 1;
+        while (j < lines.length) {
+          const nxt = lines[j];
+          if (nxt.match(dateRegexHdfc) || nxt.startsWith('Page No') || nxt.startsWith('MR SAJJA') || nxt.startsWith('STATEMENT SUMMARY') || nxt.includes('Statement of account')) {
+            break;
+          }
+          entryLines.push(nxt);
+          j++;
+        }
+        bankEntries.push({ date: dateStr, full: entryLines.join(' ') });
+        i = j;
+      } else {
+        i++;
+      }
+    }
+
+    if (bankEntries.length > 0) {
+      let prevBal: number | null = null;
+      const openBalMatch = text.match(/Opening Balance[\s\S]*?([\d,]+\.\d{2})/i);
+      if (openBalMatch) {
+        prevBal = parseFloat(openBalMatch[1].replace(/,/g, ''));
+      }
+
+      for (const entry of bankEntries) {
+        const amounts = entry.full.match(/[\d,]+\.\d{2}/g);
+        if (amounts && amounts.length >= 2) {
+          const closing = parseFloat(amounts[amounts.length - 1].replace(/,/g, ''));
+          const amount = parseFloat(amounts[amounts.length - 2].replace(/,/g, ''));
+
+          const refMatch = entry.full.match(/(\d{16})\d{2}\/\d{2}\/\d{2,4}/);
+          let narration = entry.full;
+          if (refMatch) {
+            narration = entry.full.substring(0, refMatch.index).trim();
+          } else {
+            const firstAmtIdx = entry.full.search(/[\d,]+\.\d{2}/);
+            if (firstAmtIdx > 0) {
+              narration = entry.full.substring(0, firstAmtIdx).trim();
+            }
+          }
+
+          let cleanDetails = narration
+            .replace(/^UPI-/, '')
+            .replace(/^CASH DEPOSIT-/, 'Cash Deposit - ')
+            .replace(/^ATW-/, 'ATM Withdrawal - ');
+
+          const upiParts = cleanDetails.split('-');
+          if (upiParts.length > 1 && !cleanDetails.startsWith('ATM') && !cleanDetails.startsWith('Cash')) {
+            cleanDetails = upiParts[0].trim();
+          }
+
+          let type: 'inflow' | 'outflow' = 'outflow';
+          if (prevBal !== null) {
+            const diff = closing - prevBal;
+            type = diff > 0 ? 'inflow' : 'outflow';
+          } else {
+            if (narration.includes('SALARY') || narration.includes('CREDIT') || narration.includes('DEPOSIT') || narration.includes('REFUND')) {
+              type = 'inflow';
+            }
+          }
+          prevBal = closing;
+
+          const dateParts = entry.date.split('/');
+          let isoDate = new Date().toISOString();
+          if (dateParts.length === 3) {
+            let year = dateParts[2];
+            if (year.length === 2) year = '20' + year;
+            const formattedDateStr = `${year}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}T12:00:00.000Z`;
+            isoDate = new Date(formattedDateStr).toISOString();
+          }
+
+          txs.push({
+            id: `tx_${idx++}`,
+            date: isoDate,
+            details: cleanDetails,
+            type,
+            amount,
+            txId: '',
+            utr: '',
+            account: 'HDFC Bank',
+            selected: true,
+            category: getSuggestedCategory(cleanDetails, type),
+            projectId: ''
+          });
+        }
+      }
+    }
+
+    // --- Method B: Canara Bank e-Passbook Parser ---
+    if (txs.length === 0) {
+      const dateRegexCanara = /^(\d{2}-\d{2}-\d{4})$/;
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (line.match(dateRegexCanara)) {
+          const dateStr = line;
+          let j = i + 1;
+          const entryLines: string[] = [];
+          while (j < lines.length) {
+            const nxt = lines[j];
+            if (nxt.match(dateRegexCanara) || nxt.startsWith('page ') || nxt.startsWith('Statement for') || nxt.startsWith('Closing Balance')) {
+              break;
+            }
+            entryLines.push(nxt);
+            j++;
+          }
+          const fullEntry = entryLines.join(' ');
+          const amounts = fullEntry.match(/[\d,]+\.\d{2}/g);
+          if (amounts && amounts.length >= 2) {
+            const amount = parseFloat(amounts[amounts.length - 2].replace(/,/g, ''));
+            const isCredit = fullEntry.includes('/CR/');
+            const type: 'inflow' | 'outflow' = isCredit ? 'inflow' : 'outflow';
+
+            const parts = fullEntry.split('/');
+            let cleanDetails = fullEntry;
+            if (parts.length >= 4) {
+              cleanDetails = parts[3].trim();
+            }
+
+            const dateParts = dateStr.split('-');
+            let isoDate = new Date().toISOString();
+            if (dateParts.length === 3) {
+              const formattedDateStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}T12:00:00.000Z`;
+              isoDate = new Date(formattedDateStr).toISOString();
+            }
+
+            txs.push({
+              id: `tx_${idx++}`,
+              date: isoDate,
+              details: cleanDetails,
+              type,
+              amount,
+              txId: '',
+              utr: '',
+              account: 'Canara Bank',
+              selected: true,
+              category: getSuggestedCategory(cleanDetails, type),
+              projectId: ''
+            });
+          }
+          i = j;
+        } else {
+          i++;
+        }
+      }
+    }
+
+    // --- Method B: PhonePe Block & Regex Parser ---
+    if (txs.length === 0) {
+      txs = extractPhonePeTransactions(text);
+    }
+
+    return txs;
+  };
+
   const extractPhonePeTransactions = (text: string): ParsedTx[] => {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const txs: ParsedTx[] = [];
+    let idx = 0;
     
     let i = 0;
-    let idx = 0;
     while (i < lines.length) {
-      const dateMatch = lines[i].match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{2},\s+\d{4}$/);
+      const dateMatch = lines[i].match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}$/i) ||
+                        lines[i].match(/^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec),?\s+\d{4}$/i);
+      
       if (!dateMatch) {
         i++;
         continue;
       }
-      const date = lines[i];
-      
-      if (i + 1 >= lines.length) break;
-      const timeMatch = lines[i+1].match(/^\d{2}:\d{2}\s+(AM|PM)$/);
-      if (!timeMatch) {
-        i++;
-        continue;
+      const dateStr = lines[i];
+
+      let timeStr = '';
+      let nextLineIdx = i + 1;
+
+      if (nextLineIdx < lines.length && lines[nextLineIdx].match(/^\d{1,2}:\d{2}\s+(AM|PM)$/i)) {
+        timeStr = lines[nextLineIdx];
+        nextLineIdx++;
       }
-      const time = lines[i+1];
-      
-      if (i + 2 >= lines.length) break;
-      const details = lines[i+2];
-      
+
+      if (nextLineIdx >= lines.length) break;
+      const details = lines[nextLineIdx];
+
       let txId = '';
       let utr = '';
       let account = '';
       let amountLine = '';
-      
-      let j = i + 3;
-      while (j < Math.min(i + 10, lines.length)) {
+
+      let j = nextLineIdx + 1;
+      while (j < Math.min(nextLineIdx + 12, lines.length)) {
         const line = lines[j];
-        if (line.startsWith('Transaction ID :')) {
-          txId = line.replace('Transaction ID :', '').trim();
-        } else if (line.startsWith('UTR No :')) {
-          utr = line.replace('UTR No :', '').trim();
-        } else if (line.startsWith('Credited to') || line.startsWith('Debited from')) {
+        if (line.includes('Transaction ID')) {
+          txId = line.split(':')[1]?.trim() || '';
+        } else if (line.includes('UTR')) {
+          utr = line.split(':')[1]?.trim() || '';
+        } else if (line.startsWith('Credited to') || line.startsWith('Debited from') || line.includes('XX')) {
           account = line.trim();
-        } else if (line.match(/^(Credit|Debit) INR\s+/)) {
+        } else if (line.match(/(Credit|Debit|Credited|Debited|Received|Paid)\s+(INR|₹)?\s*[\d,.]+/i) || line.match(/(INR|₹)\s*[\d,.]+\s*(Credit|Debit)?/i)) {
           amountLine = line;
           break;
         }
         j++;
       }
-      
+
       if (amountLine) {
-        const amountMatch = amountLine.match(/^(Credit|Debit) INR\s+([\d,.]+)/);
-        if (amountMatch) {
-          const type = amountMatch[1] === 'Credit' ? 'inflow' : 'outflow';
-          const amount = parseFloat(amountMatch[2].replace(/,/g, ''));
-          
-          let title = details;
-          if (title.startsWith('Paid to ')) {
-            title = title.replace('Paid to ', '');
-          } else if (title.startsWith('Received from ')) {
-            title = title.replace('Received from ', '');
+        const isCredit = /Credit|Credited|Received/i.test(amountLine);
+        const type: 'inflow' | 'outflow' = isCredit ? 'inflow' : 'outflow';
+        let amount = 0;
+        const numMatches = amountLine.match(/[\d,.]+/g);
+        if (numMatches) {
+          const validNums = numMatches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n) && n > 0);
+          if (validNums.length > 0) {
+            amount = validNums[validNums.length - 1];
           }
-          
-          let parsedDateString = `${date} ${time}`;
+        }
+
+        if (amount > 0) {
+          let title = details;
+          if (title.startsWith('Paid to ')) title = title.replace('Paid to ', '');
+          else if (title.startsWith('Received from ')) title = title.replace('Received from ', '');
+          else if (title.startsWith('Transfer to ')) title = title.replace('Transfer to ', '');
+
           let isoDate = new Date().toISOString();
           try {
-            const parsedDate = new Date(parsedDateString);
+            const parsedDate = new Date(`${dateStr} ${timeStr}`.trim());
             if (!isNaN(parsedDate.getTime())) {
               isoDate = parsedDate.toISOString();
             }
           } catch (e) {}
-          
+
           txs.push({
             id: `tx_${idx++}`,
             date: isoDate,
@@ -421,13 +602,39 @@ const App: React.FC = () => {
             category: getSuggestedCategory(title, type),
             projectId: ''
           });
+
+          i = j + 1;
+          continue;
         }
-        i = j + 1;
-      } else {
-        i++;
+      }
+      i++;
+    }
+
+    if (txs.length === 0) {
+      const regex = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}[\s\S]*?(Debit|Credit)\s+INR\s+([\d,.]+)/gi;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const typeStr = match[2];
+        const amountVal = parseFloat(match[3].replace(/,/g, ''));
+        if (amountVal > 0) {
+          const isCredit = typeStr.toLowerCase() === 'credit';
+          txs.push({
+            id: `tx_${idx++}`,
+            date: new Date().toISOString(),
+            details: 'PhonePe Transaction',
+            type: isCredit ? 'inflow' : 'outflow',
+            amount: amountVal,
+            txId: '',
+            utr: '',
+            account: '',
+            selected: true,
+            category: getSuggestedCategory('PhonePe Transaction', isCredit ? 'inflow' : 'outflow'),
+            projectId: ''
+          });
+        }
       }
     }
-    
+
     return txs;
   };
 
@@ -444,6 +651,7 @@ const App: React.FC = () => {
   const parsePdfBuffer = async (buffer: ArrayBuffer, password = '') => {
     setIsParsing(true);
     setParsingError('');
+    setHasParsed(false);
     
     if (!(window as any).pdfjsLib) {
       try {
@@ -460,8 +668,10 @@ const App: React.FC = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     
     try {
+      // Clone ArrayBuffer so PDF.js worker transfer does not detach our stored pdfFileBuffer
+      const dataCopy = new Uint8Array(buffer.slice(0));
       const loadingTask = pdfjsLib.getDocument({
-        data: buffer,
+        data: dataCopy,
         password: password
       });
       
@@ -475,12 +685,14 @@ const App: React.FC = () => {
         fullText += pageText + '\n';
       }
       
-      const txs = extractPhonePeTransactions(fullText);
+      const txs = extractBankOrPhonePeTransactions(fullText);
       setParsedTxs(txs);
       setPasswordRequired(false);
+      setHasParsed(true);
     } catch (err: any) {
       if (err.name === 'PasswordException' || err.code === 1) {
         setPasswordRequired(true);
+        setParsingError('This PDF is password-protected. Please enter your PDF password (e.g. HDFC Customer ID or PhonePe mobile number) to unlock.');
       } else {
         console.error(err);
         setParsingError('Error parsing PDF: ' + err.message);
@@ -498,6 +710,8 @@ const App: React.FC = () => {
     setParsingError('');
     setPasswordRequired(false);
     setPdfPassword('');
+    setHasParsed(false);
+    setParsedTxs([]);
     
     const reader = new FileReader();
     reader.onload = async () => {
@@ -508,8 +722,7 @@ const App: React.FC = () => {
     reader.readAsArrayBuffer(file);
   };
 
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleProcessPdfClick = async () => {
     if (!pdfFileBuffer) return;
     await parsePdfBuffer(pdfFileBuffer, pdfPassword);
   };
@@ -648,13 +861,19 @@ const App: React.FC = () => {
       // 3. Check for Notifications
       checkUpcomingReminders(plannedData || []);
 
-      // 4. Calculate Summary (Excludes zero-cost Pass-Through Flow to reflect real earned income & expenses)
-      const gross_revenue = (transData as Transaction[])
-        ?.filter(t => t.type === 'inflow' && t.tier1_category !== 'Pass-Through Flow')
+      // 4. Calculate Summary (Excludes Pass-Through Flow, Internal Transfer, ATM Withdrawal for accurate earnings)
+      const filteredForStats = (transData as Transaction[])?.filter(t => {
+        if (t.tier1_category === 'Pass-Through Flow') return false;
+        if (excludeInternal && (t.tier1_category === 'Internal Transfer' || t.tier1_category === 'ATM Withdrawal')) return false;
+        return true;
+      });
+
+      const gross_revenue = filteredForStats
+        ?.filter(t => t.type === 'inflow')
         .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
       
-      const gross_expenses = (transData as Transaction[])
-        ?.filter(t => t.type === 'outflow' && t.tier1_category !== 'Pass-Through Flow')
+      const gross_expenses = filteredForStats
+        ?.filter(t => t.type === 'outflow')
         .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
 
       setSummary({
@@ -668,7 +887,7 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [excludeTravel, getDateBounds, checkUpcomingReminders]);
+  }, [excludeTravel, excludeInternal, getDateBounds, checkUpcomingReminders]);
 
   useEffect(() => {
     fetchProjects();
@@ -719,6 +938,7 @@ const App: React.FC = () => {
 
   const categoryBreakdown = transactions
     .filter(t => t.type === 'outflow')
+    .filter(t => !excludeInternal || (t.tier1_category !== 'Internal Transfer' && t.tier1_category !== 'ATM Withdrawal'))
     .reduce((acc: Record<string, number>, t) => {
       acc[t.tier1_category] = (acc[t.tier1_category] || 0) + Number(t.amount);
       return acc;
@@ -982,7 +1202,7 @@ const App: React.FC = () => {
               className={`toggle-btn ${inputMode === 'phonepe' ? 'active' : ''}`}
               onClick={() => setInputMode('phonepe')}
             >
-              Import PhonePe PDF
+              Import PDF Statement (Bank / PhonePe)
             </button>
           </div>
 
@@ -1103,10 +1323,10 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="card" style={{ marginTop: 0 }}>
-              <h2 style={{ marginBottom: '1.5rem' }}>Import PhonePe Statement</h2>
+              <h2 style={{ marginBottom: '1.5rem' }}>Import Bank / PhonePe Statement</h2>
               
               <div className="input-group">
-                <label>Select PhonePe PDF Statement</label>
+                <label>Select PDF Statement (HDFC / Bank / PhonePe)</label>
                 <input 
                   type="file" 
                   accept="application/pdf" 
@@ -1116,42 +1336,61 @@ const App: React.FC = () => {
               </div>
 
               {pdfFile && (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.75rem', marginBottom: '1.25rem' }}>
-                  Selected File: <strong>{pdfFile.name}</strong>
-                </p>
-              )}
-
-              {isParsing && (
-                <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '1.5rem 0' }}>
-                  Decrypting and parsing PDF statement...
-                </p>
-              )}
-
-              {passwordRequired && (
-                <form onSubmit={handlePasswordSubmit} style={{ background: 'rgba(255, 77, 77, 0.05)', padding: '1.25rem', borderRadius: '12px', border: '1px solid var(--accent-outflow)', marginBottom: '1.5rem' }}>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--accent-outflow)', marginTop: 0, marginBottom: '0.75rem', fontWeight: 600 }}>
-                    This PDF is encrypted. Enter your PhonePe password (typically your 10-digit registered mobile number):
+                <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+                  <p style={{ fontSize: '0.9rem', margin: '0 0 0.75rem 0' }}>
+                    📄 File Selected: <strong>{pdfFile.name}</strong> ({(pdfFile.size / 1024).toFixed(1)} KB)
                   </p>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+
+                  <div className="input-group" style={{ marginBottom: '0.75rem' }}>
+                    <label style={{ fontSize: '0.8rem' }}>PDF Password (If encrypted - HDFC uses Customer ID e.g. 348149848, PhonePe uses mobile number)</label>
                     <input 
                       type="password" 
                       value={pdfPassword} 
                       onChange={(e) => setPdfPassword(e.target.value)} 
-                      placeholder="e.g. 9133095695"
-                      required
-                      style={{ background: 'rgba(0,0,0,0.4)', flex: 1 }}
+                      placeholder="e.g. 348149848 or 9876543210"
+                      style={{ background: 'rgba(0,0,0,0.3)' }}
                     />
-                    <button type="submit" className="btn-primary" style={{ width: 'auto', margin: 0, padding: '0.75rem 1.5rem' }}>
-                      Unlock
-                    </button>
                   </div>
-                </form>
+
+                  <button 
+                    type="button" 
+                    className="btn-primary" 
+                    onClick={handleProcessPdfClick}
+                    disabled={isParsing}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginTop: '0.5rem' }}
+                  >
+                    <Download size={18} />
+                    {isParsing ? 'Processing Statement PDF...' : 'Parse & Extract Transactions'}
+                  </button>
+                </div>
               )}
 
-              {parsingError && (
-                <p style={{ color: 'var(--accent-outflow)', fontSize: '0.85rem', marginBottom: '1.5rem', fontWeight: 600 }}>
-                  {parsingError}
+              {isParsing && (
+                <p style={{ textAlign: 'center', color: 'var(--accent-blue)', padding: '1rem 0', fontWeight: 500 }}>
+                  ⏳ Decrypting & parsing PhonePe PDF statement...
                 </p>
+              )}
+
+              {passwordRequired && (
+                <div style={{ background: 'rgba(255, 77, 77, 0.08)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent-outflow)', marginBottom: '1.5rem' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--accent-outflow)', margin: 0, fontWeight: 600 }}>
+                    🔒 Password required! Enter your PhonePe password (10-digit mobile number) in the field above and click "Parse & Extract Transactions".
+                  </p>
+                </div>
+              )}
+
+              {parsingError && !passwordRequired && (
+                <p style={{ color: 'var(--accent-outflow)', fontSize: '0.85rem', marginBottom: '1.5rem', fontWeight: 600 }}>
+                  ⚠️ {parsingError}
+                </p>
+              )}
+
+              {hasParsed && parsedTxs.length === 0 && !isParsing && !passwordRequired && (
+                <div style={{ background: 'rgba(255, 193, 7, 0.08)', padding: '1rem', borderRadius: '12px', border: '1px solid #ffc107', marginBottom: '1.5rem' }}>
+                  <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0, fontWeight: 600 }}>
+                    ℹ️ No transactions were recognized in this file. Please verify that this is an official PhonePe statement PDF. If it's password protected, enter the password above and click "Parse & Extract Transactions".
+                  </p>
+                </div>
               )}
 
               {parsedTxs.length > 0 && (
@@ -1471,7 +1710,7 @@ const App: React.FC = () => {
       ) : (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <div className="filter-scroll-container" style={{ margin: 0 }}>
+            <div className="filter-scroll-container" style={{ margin: 0, display: 'flex', gap: '0.4rem' }}>
               {(['thisMonth', 'lastMonth', 'all'] as const).map(range => (
                 <button
                   key={range}
@@ -1481,6 +1720,13 @@ const App: React.FC = () => {
                   {range === 'thisMonth' ? 'This Month' : range === 'lastMonth' ? 'Last Month' : 'All Time'}
                 </button>
               ))}
+              <button
+                className={`toggle-btn ${excludeInternal ? 'active' : ''}`}
+                onClick={() => setExcludeInternal(!excludeInternal)}
+                title="Toggle between Real External Finances and Gross Bank Movements"
+              >
+                {excludeInternal ? 'Real External' : 'Gross Bank'}
+              </button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <label style={{ margin: 0, fontSize: '0.6rem' }}>Budget</label>

@@ -1,14 +1,24 @@
 :root {
-  --bg-primary: #000000;
-  --bg-secondary: rgba(18, 18, 18, 0.8);
-  --text-primary: #ffffff;
-  --text-secondary: #949494;
+  --bg-primary: #0a0c10;
+  --bg-secondary: rgba(18, 22, 31, 0.75);
+  --bg-card: rgba(22, 27, 38, 0.65);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
   --accent-inflow: #10b981;
-  --accent-outflow: #ff4d4d;
+  --accent-inflow-glow: rgba(16, 185, 129, 0.2);
+  --accent-outflow: #f43f5e;
+  --accent-outflow-glow: rgba(244, 63, 94, 0.2);
   --accent-blue: #3b82f6;
-  --border: rgba(45, 45, 45, 0.6);
+  --accent-blue-glow: rgba(59, 130, 246, 0.25);
+  --accent-purple: #8b5cf6;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(59, 130, 246, 0.4);
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --glass-bg: rgba(15, 15, 15, 0.5);
+  --glass-bg: rgba(15, 20, 30, 0.6);
+  --glass-blur: blur(16px);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
 }
 
 * {
@@ -20,49 +30,59 @@
 body {
   background-color: var(--bg-primary);
   background-image: 
-    radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+    radial-gradient(at 10% 10%, rgba(59, 130, 246, 0.08) 0px, transparent 40%),
+    radial-gradient(at 90% 20%, rgba(139, 92, 246, 0.06) 0px, transparent 45%),
+    radial-gradient(at 50% 80%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+  background-attachment: fixed;
   color: var(--text-primary);
   font-family: var(--font-family);
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   overflow-x: hidden;
-  overscroll-behavior-y: none;
 }
 
 .container {
-  max-width: 800px;
+  max-width: 900px;
   margin: 0 auto;
-  padding: 1rem;
-  padding-top: calc(1rem + env(safe-area-inset-top));
-  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  padding: 1.5rem;
+  padding-top: calc(1.5rem + env(safe-area-inset-top));
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
   width: 100%;
 }
 
-@media (max-width: 480px) {
-  .card {
-    padding: 1.25rem 1rem;
-    border-radius: 12px;
+@media (max-width: 640px) {
+  .container {
+    padding: 1rem;
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
   }
 }
 
 /* Typography */
-h1, h2, h3 {
+h1, h2, h3, h4 {
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
 }
 
-h1 { font-size: 1.5rem; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1.1rem; }
 
 /* Card Styles */
 .card {
-  background-color: var(--bg-secondary);
-  backdrop-filter: blur(12px);
-  border-radius: 16px;
-  padding: 1.5rem;
+  background: var(--bg-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem;
   border: 1px solid var(--border);
   margin-bottom: 1.5rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 /* Form Styles */
@@ -72,49 +92,56 @@ h1 { font-size: 1.5rem; }
 
 label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.725rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--text-secondary);
   margin-bottom: 0.5rem;
 }
 
 input, select, textarea {
   width: 100%;
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: rgba(10, 14, 23, 0.6);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1.1rem;
   color: var(--text-primary);
-  font-size: 0.9375rem;
+  font-size: 0.95rem;
   outline: none;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   appearance: none;
 }
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent-blue);
-  background-color: rgba(0, 0, 0, 0.4);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  background-color: rgba(15, 22, 36, 0.85);
+  box-shadow: 0 0 0 3px var(--accent-blue-glow);
+}
+
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%3C94a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
 }
 
 /* Custom Toggle */
 .toggle-container {
   display: flex;
-  background-color: rgba(0, 0, 0, 0.2);
-  border-radius: 14px;
-  padding: 0.3rem;
+  background-color: rgba(10, 14, 23, 0.6);
+  border-radius: var(--radius-md);
+  padding: 0.35rem;
   margin-bottom: 1.5rem;
-  gap: 0.3rem;
+  gap: 0.4rem;
   border: 1px solid var(--border);
 }
 
 .toggle-btn {
   flex: 1;
-  padding: 0.75rem 0.5rem;
+  padding: 0.8rem 0.6rem;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -125,61 +152,60 @@ input:focus, select:focus, textarea:focus {
   background: transparent;
   color: var(--text-secondary);
   font-size: 0.875rem;
+  user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
 
 .toggle-btn:hover:not(.active) {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text-primary);
 }
 
 .toggle-btn.active {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .toggle-btn.active.inflow {
-  background-color: var(--accent-inflow);
+  background: linear-gradient(135deg, #10b981, #059669);
   color: white;
+  box-shadow: 0 4px 14px var(--accent-inflow-glow);
 }
 
 .toggle-btn.active.outflow {
-  background-color: var(--accent-outflow);
+  background: linear-gradient(135deg, #f43f5e, #e11d48);
   color: white;
+  box-shadow: 0 4px 14px var(--accent-outflow-glow);
 }
 
 /* Buttons */
 .btn-primary {
   width: 100%;
   padding: 1rem;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: none;
   font-weight: 700;
   font-size: 1rem;
   cursor: pointer;
-  background: linear-gradient(135deg, var(--accent-blue), #2563eb);
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
   color: white;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   margin-top: 0.5rem;
-  box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 16px var(--accent-blue-glow);
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
+  opacity: 0.95;
   transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
 }
 
 .btn-primary:active {
   transform: translateY(0);
 }
 
-.toggle-btn, .nav-item, .btn-primary {
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* Dashboard Metrics */
+/* Dashboard Metrics Grid */
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -198,12 +224,19 @@ input:focus, select:focus, textarea:focus {
 }
 
 .metric-card {
-  background-color: rgba(0, 0, 0, 0.2);
-  padding: 1.25rem;
-  border-radius: 16px;
+  background: rgba(15, 20, 30, 0.5);
+  padding: 1.35rem 1.25rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  backdrop-filter: blur(10px);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .metric-label {
@@ -216,9 +249,10 @@ input:focus, select:focus, textarea:focus {
 }
 
 .metric-value {
-  font-size: 1.25rem;
+  font-size: 1.35rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .metric-value.positive { color: var(--accent-inflow); }
@@ -259,8 +293,8 @@ input:focus, select:focus, textarea:focus {
 }
 
 .ring-percent {
-  font-size: 0.875rem;
-  font-weight: 700;
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 /* Transaction List */
@@ -268,9 +302,14 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1.25rem 0;
+  padding: 1.25rem 0.5rem;
   border-bottom: 1px solid var(--border);
-  transition: background 0.2s;
+  transition: background 0.2s ease;
+  border-radius: var(--radius-sm);
+}
+
+.transaction-item:hover {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .transaction-item:last-child {
@@ -283,13 +322,13 @@ input:focus, select:focus, textarea:focus {
 }
 
 .transaction-info h4 {
-  font-size: 1rem;
+  font-size: 0.975rem;
   margin-bottom: 0.25rem;
   color: var(--text-primary);
 }
 
 .transaction-info p {
-  font-size: 0.875rem;
+  font-size: 0.825rem;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -301,7 +340,15 @@ input:focus, select:focus, textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
-/* New Usability UI Components */
+.transaction-amount.positive {
+  color: var(--accent-inflow);
+}
+
+.transaction-amount.negative {
+  color: var(--accent-outflow);
+}
+
+/* Usability UI Components */
 .filter-scroll-container {
   margin-bottom: 1.5rem;
   display: flex;
@@ -319,8 +366,8 @@ input:focus, select:focus, textarea:focus {
   font-size: 0.65rem;
   font-weight: 700;
   text-transform: uppercase;
-  background-color: rgba(59, 130, 246, 0.1);
-  padding: 2px 8px;
+  background-color: rgba(59, 130, 246, 0.15);
+  padding: 3px 9px;
   border-radius: 6px;
   color: var(--accent-blue);
   display: inline-flex;
@@ -330,7 +377,7 @@ input:focus, select:focus, textarea:focus {
 
 .progress-container {
   height: 8px;
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: rgba(10, 14, 23, 0.6);
   border-radius: 4px;
   overflow: hidden;
   margin-top: 0.5rem;
@@ -353,11 +400,6 @@ input:focus, select:focus, textarea:focus {
   font-weight: 500;
 }
 
-@keyframes ring-draw {
-  from { stroke-dashoffset: var(--dash-array); }
-  to { stroke-dashoffset: var(--dash-offset); }
-}
-
 .ring-circle-bg {
   stroke: rgba(255, 255, 255, 0.05);
 }
@@ -367,21 +409,22 @@ input:focus, select:focus, textarea:focus {
   stroke-linecap: round;
 }
 
-/* Mobile Navigation (Optimized for Reachability) */
+/* Mobile Navigation */
 .mobile-nav {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  background-color: rgba(9, 9, 11, 0.95);
+  background-color: rgba(10, 14, 23, 0.92);
   backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-around;
   padding: 0.75rem 1rem;
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
   z-index: 1000;
-  box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5);
 }
 
 .nav-item {
@@ -396,8 +439,9 @@ input:focus, select:focus, textarea:focus {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   flex: 1;
+  cursor: pointer;
 }
 
 .nav-item.active {
@@ -405,13 +449,12 @@ input:focus, select:focus, textarea:focus {
 }
 
 .nav-item:active {
-  transform: scale(0.9);
+  transform: scale(0.92);
 }
 
-/* Hide header nav on mobile, show bottom nav */
 @media (min-width: 641px) {
   .mobile-nav { display: none; }
-  .container { padding-bottom: 1rem; }
+  .container { padding-bottom: 1.5rem; }
 }
 
 @media (max-width: 640px) {
@@ -425,8 +468,9 @@ input:focus, select:focus, textarea:focus {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -436,17 +480,16 @@ input:focus, select:focus, textarea:focus {
 
 .modal-content {
   animation: modal-fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.7);
 }
 
 @keyframes modal-fade-in {
   from {
     opacity: 0;
-    transform: scale(0.95) translateY(10px);
+    transform: scale(0.95) translateY(12px);
   }
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
   }
 }
-

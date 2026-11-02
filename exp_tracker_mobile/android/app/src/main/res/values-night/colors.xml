@@ -1,0 +1,27 @@
+<resources>
+  <color name="splashscreen_background">#000000</color>
+  <color name="iconBackground">#000000</color>
+  <color name="colorPrimary">#FFFFFF</color>
+  <color name="notification_icon_color">#FFFFFF</color>
+
+  <!-- Dark Theme System Colors -->
+  <color name="dialog_bg">#0F0F0F</color>
+  <color name="dialog_border">#27272A</color>
+  <color name="text_primary">#FFFFFF</color>
+  <color name="text_secondary">#A1A1AA</color>
+  <color name="text_hint">#52525B</color>
+  <color name="input_bg">#141414</color>
+  <color name="input_border">#262626</color>
+  <color name="btn_primary_bg">#FFFFFF</color>
+  <color name="btn_primary_text">#000000</color>
+  <color name="btn_secondary_bg">#18181B</color>
+  <color name="btn_secondary_border">#27272A</color>
+  <color name="btn_secondary_text">#FFFFFF</color>
+  <color name="chip_selected_bg">#FFFFFF</color>
+  <color name="chip_selected_text">#000000</color>
+  <color name="chip_unselected_bg">#141414</color>
+  <color name="chip_unselected_border">#262626</color>
+  <color name="chip_unselected_text">#A1A1AA</color>
+  <color name="widget_bg">#0F0F0F</color>
+  <color name="widget_border">#27272A</color>
+</resources>
